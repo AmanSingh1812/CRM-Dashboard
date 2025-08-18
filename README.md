@@ -4,7 +4,7 @@ A web-based application to manage customer details, send automated reminders via
 
 ## Live Demo
 
-[https://your-app.vercel.app](https://your-app.vercel.app)
+https://customer-management-reminder-app.vercel.app/
 
 ## Features
 
