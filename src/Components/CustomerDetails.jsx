@@ -8,8 +8,8 @@ function CustomerDetails({ customerDetails, setCustomerDetails }) {
 
   // 🔔 Telegram Sender
   const sendTelegramReminder = async (message) => {
-    const botToken = "8292367263:AAG__jM7e2LhaF4DF7HIqH2HU60yL88djs0"; // 🔑 Replace with your bot token
-    const chatId = "1347588688"; // 🆔 Replace with your chat id
+    const botToken = process.env.REACT_APP_BOT_TOKEN; // 🔑 Replace with your bot token
+    const chatId = process.env.REACT_APP_CHAT_ID;// 🆔 Replace with your chat id
     const url = `https://api.telegram.org/bot${botToken}/sendMessage`;
 
     try {
