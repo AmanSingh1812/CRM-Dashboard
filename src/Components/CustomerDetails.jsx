@@ -1,290 +1,354 @@
-import { saveAs } from "file-saver";
 import { useEffect, useState } from "react";
-import * as XLSX from "xlsx";
+import {
+  collection,
+  deleteDoc,
+  doc,
+  updateDoc,
+  onSnapshot,
+  addDoc,
+} from "firebase/firestore";
+import { db } from "../firebase";
+import * as XLSX from "xlsx"; // ✅ Excel parser
+import servicePrices from "./servicePrice";
 
 function CustomerDetails({ customerDetails, setCustomerDetails }) {
-  const [editingIndex, setEditingIndex] = useState(null);
+  const [editingId, setEditingId] = useState(null);
   const [editingData, setEditingData] = useState({});
 
-  // 🔔 Telegram Sender
-  const sendTelegramReminder = async (message) => {
-    const botToken = process.env.REACT_APP_BOT_TOKEN; // 🔑 Replace with your bot token
-    const chatId = process.env.REACT_APP_CHAT_ID;// 🆔 Replace with your chat id
-    const url = `https://api.telegram.org/bot${botToken}/sendMessage`;
-
-    try {
-      await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          chat_id: chatId,
-          text: message,
-        }),
-      });
-    } catch (err) {
-      console.error("Telegram Error:", err);
-    }
-  };
-
-  // 🔔 Check reminders every 1 minute
+  // Real-time subscription
   useEffect(() => {
-    if (!customerDetails || customerDetails.length === 0) return;
-
-    const interval = setInterval(() => {
-      const now = new Date();
-      const pad = (n) => (n < 10 ? "0" + n : n);
-      const nowString = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(
-        now.getDate()
-      )}T${pad(now.getHours())}:${pad(now.getMinutes())}`;
-
-      customerDetails.forEach((customer) => {
-        if (
-          customer.remainder &&
-          customer.remainder.slice(0, 16) === nowString
-        ) {
-          const message = `⏰ Reminder for ${customer.firstname} ${customer.lastname}\nService: ${customer.services}\nRemark: ${customer.remark}`;
-          sendTelegramReminder(message);
-        }
-      });
-    }, 30000);
-
-    return () => clearInterval(interval);
-  }, [customerDetails]);
-
-  // 📝 Edit & Delete
-  const onDelete = (index) => {
-    const updated = [...customerDetails];
-    updated.splice(index, 1);
-    setCustomerDetails(updated);
-    localStorage.setItem("customerDetails", JSON.stringify(updated));
-  };
-
-  const onEdit = (index) => {
-    setEditingIndex(index);
-    setEditingData({ ...customerDetails[index] });
-  };
-
-  const onSave = () => {
-    const updated = [...customerDetails];
-    updated[editingIndex] = editingData;
-    setCustomerDetails(updated);
-    localStorage.setItem("customerDetails", JSON.stringify(updated));
-    setEditingIndex(null);
-    setEditingData({});
-  };
-
-  // 📥 Export Excel
-  const exportToExcel = () => {
-    const worksheet = XLSX.utils.json_to_sheet(customerDetails);
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, "Customers");
-
-    const excelBuffer = XLSX.write(workbook, {
-      bookType: "xlsx",
-      type: "array",
+    const colRef = collection(db, "customers");
+    const unsubscribe = onSnapshot(colRef, (snapshot) => {
+      const data = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+      setCustomerDetails(data);
     });
-    const data = new Blob([excelBuffer], { type: "application/octet-stream" });
-    saveAs(data, "CustomerDetails.xlsx");
-  };
 
-  // 📤 Import Excel
-  const importFromExcel = (e) => {
+    return () => unsubscribe();
+  }, [setCustomerDetails]);
+
+  // ✅ Handle Excel Upload
+  const handleExcelUpload = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
 
-    const reader = new FileReader();
-    reader.onload = (evt) => {
-      const bstr = evt.target.result;
-      const workbook = XLSX.read(bstr, { type: "binary" });
+    try {
+      const data = await file.arrayBuffer();
+      const workbook = XLSX.read(data, { type: "array" });
       const sheetName = workbook.SheetNames[0];
-      const sheet = workbook.Sheets[sheetName];
-      const data = XLSX.utils.sheet_to_json(sheet);
+      const worksheet = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName]);
 
-      setCustomerDetails((prev) => {
-        const merged = [...prev, ...data];
-        localStorage.setItem("customerDetails", JSON.stringify(merged));
-        return merged;
-      });
-    };
-    reader.readAsBinaryString(file);
+      // Loop through each row and add to Firestore
+      for (const row of worksheet) {
+        const customerData = {
+          firstName: row["First Name"] || "",
+          lastName: row["Last Name"] || "",
+          email: row["Email"] || "",
+          phone: row["Phone"] || "",
+          dob: row["DOB"] || "",
+          service: row["Service"] || "",
+          unit: row["Unit"] || 0,
+          remark: row["Remark"] || "",
+          reminder: row["Reminder"] || "",
+        };
+
+        await addDoc(collection(db, "customers"), customerData);
+      }
+
+      alert("✅ Excel data uploaded successfully!");
+    } catch (error) {
+      console.error("Error uploading Excel:", error);
+      alert("❌ Failed to upload Excel file");
+    }
+  };
+
+  // ✅ Handle Excel Download
+  const handleExcelDownload = () => {
+    if (customerDetails.length === 0) {
+      alert("No data available to export!");
+      return;
+    }
+
+    // Prepare data
+    const dataToExport = customerDetails.map((customer) => ({
+      "First Name": customer.firstName,
+      "Last Name": customer.lastName,
+      Email: customer.email,
+      Phone: customer.phone,
+      DOB: customer.dob,
+      Service: customer.service,
+      Unit: customer.unit,
+      "Total Price": calculateTotalPrice(customer.service, customer.unit),
+      Remark: customer.remark,
+      Reminder: customer.reminder,
+    }));
+
+    const worksheet = XLSX.utils.json_to_sheet(dataToExport);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Customers");
+
+    // Download file
+    XLSX.writeFile(workbook, "CustomerDetails.xlsx");
+  };
+
+  // Delete customer
+  const handleDelete = async (id) => {
+    try {
+      await deleteDoc(doc(db, "customers", id));
+    } catch (error) {
+      console.error("Error deleting customer:", error);
+    }
+  };
+
+  // Edit
+  const handleEdit = (customer) => {
+    setEditingId(customer.id);
+    setEditingData({
+      firstName: customer.firstName || "",
+      lastName: customer.lastName || "",
+      email: customer.email || "",
+      phone: customer.phone || "",
+      dob: customer.dob || "",
+      service: customer.service || "",
+      unit: customer.unit || 0,
+      remark: customer.remark || "",
+      reminder: customer.reminder || "",
+    });
+  };
+
+  // Save update
+  const handleSave = async (id) => {
+    try {
+      const docRef = doc(db, "customers", id);
+      await updateDoc(docRef, editingData);
+      setEditingId(null);
+      setEditingData({});
+    } catch (error) {
+      console.error("Error updating customer:", error);
+    }
+  };
+
+  const handleChange = (e) => {
+    setEditingData({ ...editingData, [e.target.name]: e.target.value });
+  };
+
+  const calculateTotalPrice = (service, unit) => {
+    const pricePerUnit = servicePrices[service] || 0;
+    return unit * pricePerUnit;
   };
 
   return (
-    <div className="p-5">
-      <h2 className="text-xl font-bold mb-3 text-center">Customer Details</h2>
+    <div className="p-4">
+      <h2 className="text-2xl font-bold text-center mb-6 text-gray-800">
+        Customer List
+      </h2>
 
-      <div className="mb-3">
-        <button
-          onClick={exportToExcel}
-          className="bg-green-500 text-white px-3 py-1 rounded me-3"
-        >
-          Download Data
-        </button>
+      {/* ✅ Excel Upload & Download */}
+      <div className="flex flex-col sm:flex-row justify-center items-center gap-4 mb-6">
         <input
           type="file"
           accept=".xlsx, .xls"
-          onChange={importFromExcel}
-          className="border p-1 rounded"
+          onChange={handleExcelUpload}
+          className="border p-2 rounded-lg shadow-sm w-64"
         />
-        <p className="text-end mt-1 text-sm">* Excel file</p>
+        <button
+          onClick={handleExcelDownload}
+          className="bg-green-600 hover:bg-green-700 text-white px-6 py-2 rounded-lg shadow transition"
+        >
+          Download Excel
+        </button>
       </div>
 
-      <table className="w-full border mt-2">
-        <thead>
-          <tr className="bg-gray-200">
-            <th className="border p-2">First Name</th>
-            <th className="border p-2">Last Name</th>
-            <th className="border p-2">Service</th>
-            <th className="border p-2">Unit</th>
-            <th className="border p-2">Total Price</th>
-            <th className="border p-2">Remark</th>
-            <th className="border p-2">Remainder</th>
-            <th className="border p-2">Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          {customerDetails.map((c, index) => (
-            <tr key={index}>
-              <td className="border p-2">
-                {editingIndex === index ? (
-                  <input
-                    type="text"
-                    value={editingData.firstname}
-                    onChange={(e) =>
-                      setEditingData({
-                        ...editingData,
-                        firstname: e.target.value,
-                      })
-                    }
-                    className="border p-1 rounded"
-                  />
-                ) : (
-                  c.firstname
-                )}
-              </td>
-              <td className="border p-2">
-                {editingIndex === index ? (
-                  <input
-                    type="text"
-                    value={editingData.lastname}
-                    onChange={(e) =>
-                      setEditingData({
-                        ...editingData,
-                        lastname: e.target.value,
-                      })
-                    }
-                    className="border p-1 rounded"
-                  />
-                ) : (
-                  c.lastname
-                )}
-              </td>
-              <td className="border p-2">
-                {editingIndex === index ? (
-                  <input
-                    type="text"
-                    value={editingData.services}
-                    onChange={(e) =>
-                      setEditingData({
-                        ...editingData,
-                        services: e.target.value,
-                      })
-                    }
-                    className="border p-1 rounded"
-                  />
-                ) : (
-                  c.services
-                )}
-              </td>
-              <td className="border p-2">
-                {editingIndex === index ? (
-                  <input
-                    type="number"
-                    value={editingData.unit}
-                    onChange={(e) =>
-                      setEditingData({ ...editingData, unit: e.target.value })
-                    }
-                    className="border p-1 rounded"
-                  />
-                ) : (
-                  c.unit
-                )}
-              </td>
-              <td className="border p-2">
-                {editingIndex === index ? (
-                  <input
-                    type="number"
-                    value={editingData.totalPrice}
-                    onChange={(e) =>
-                      setEditingData({
-                        ...editingData,
-                        totalPrice: e.target.value,
-                      })
-                    }
-                    className="border p-1 rounded"
-                  />
-                ) : (
-                  c.totalPrice
-                )}
-              </td>
-              <td className="border p-2">
-                {editingIndex === index ? (
-                  <input
-                    type="text"
-                    value={editingData.remark}
-                    onChange={(e) =>
-                      setEditingData({ ...editingData, remark: e.target.value })
-                    }
-                    className="border p-1 rounded"
-                  />
-                ) : (
-                  c.remark
-                )}
-              </td>
-              <td className="border p-2">
-                {editingIndex === index ? (
-                  <input
-                    type="datetime-local"
-                    value={editingData.remainder}
-                    onChange={(e) =>
-                      setEditingData({
-                        ...editingData,
-                        remainder: e.target.value,
-                      })
-                    }
-                    className="border p-1 rounded"
-                  />
-                ) : (
-                  c.remainder
-                )}
-              </td>
-              <td className="border p-2 space-x-2">
-                {editingIndex === index ? (
-                  <button
-                    onClick={onSave}
-                    className="bg-green-500 text-white px-3 py-1 rounded"
-                  >
-                    Save
-                  </button>
-                ) : (
-                  <button
-                    onClick={() => onEdit(index)}
-                    className="bg-blue-500 text-white px-3 py-1 rounded"
-                  >
-                    Edit
-                  </button>
-                )}
-                <button
-                  onClick={() => onDelete(index)}
-                  className="bg-red-500 text-white px-3 py-1 rounded"
-                >
-                  Delete
-                </button>
-              </td>
+      {/* Responsive Table */}
+      <div className="overflow-x-auto shadow-lg rounded-lg">
+        <table className="w-full border border-gray-300 bg-white">
+          <thead className="bg-gray-100 text-gray-700 text-sm">
+            <tr>
+              <th className="border px-4 py-2">First Name</th>
+              <th className="border px-4 py-2">Last Name</th>
+              <th className="border px-4 py-2">Email</th>
+              <th className="border px-4 py-2">Phone</th>
+              <th className="border px-4 py-2">DOB</th>
+              <th className="border px-4 py-2">Service</th>
+              <th className="border px-4 py-2">Unit</th>
+              <th className="border px-4 py-2">Total Price</th>
+              <th className="border px-4 py-2">Remark</th>
+              <th className="border px-4 py-2">Reminder</th>
+              <th className="border px-4 py-2">Actions</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {customerDetails.map((customer) => (
+              <tr
+                key={customer.id}
+                className="text-center hover:bg-gray-50 transition"
+              >
+                <td className="border px-2 py-2">
+                  {editingId === customer.id ? (
+                    <input
+                      className="border p-1 rounded"
+                      name="firstName"
+                      value={editingData.firstName}
+                      onChange={handleChange}
+                    />
+                  ) : (
+                    customer.firstName
+                  )}
+                </td>
+                <td className="border px-2 py-2">
+                  {editingId === customer.id ? (
+                    <input
+                      className="border p-1 rounded"
+                      name="lastName"
+                      value={editingData.lastName}
+                      onChange={handleChange}
+                    />
+                  ) : (
+                    customer.lastName
+                  )}
+                </td>
+                <td className="border px-2 py-2">
+                  {editingId === customer.id ? (
+                    <input
+                      className="border p-1 rounded"
+                      name="email"
+                      value={editingData.email}
+                      onChange={handleChange}
+                    />
+                  ) : (
+                    customer.email
+                  )}
+                </td>
+                <td className="border px-2 py-2">
+                  {editingId === customer.id ? (
+                    <input
+                      className="border p-1 rounded"
+                      name="phone"
+                      value={editingData.phone}
+                      onChange={handleChange}
+                    />
+                  ) : (
+                    customer.phone
+                  )}
+                </td>
+                <td className="border px-2 py-2">
+                  {editingId === customer.id ? (
+                    <input
+                      type="date"
+                      className="border p-1 rounded"
+                      name="dob"
+                      value={editingData.dob}
+                      onChange={handleChange}
+                    />
+                  ) : (
+                    customer.dob
+                  )}
+                </td>
+                <td className="border px-2 py-2">
+                  {editingId === customer.id ? (
+                    <select
+                      className="border p-1 rounded"
+                      name="service"
+                      value={editingData.service}
+                      onChange={handleChange}
+                    >
+                      <option value="transaction_Sms">Transaction SMS</option>
+                      <option value="promotion_Sms">Promotion SMS</option>
+                      <option value="official_Whatsapp">
+                        Official Whatsapp
+                      </option>
+                      <option value="vertual_Whatsapp">Virtual Whatsapp</option>
+                      <option value="voice_Call">Voice Call</option>
+                      <option value="ivr">IVR</option>
+                      <option value="digital_Marketing">
+                        Digital Marketing
+                      </option>
+                    </select>
+                  ) : (
+                    customer.service
+                  )}
+                </td>
+                <td className="border px-2 py-2">
+                  {editingId === customer.id ? (
+                    <input
+                      type="number"
+                      className="border p-1 rounded w-20"
+                      name="unit"
+                      value={editingData.unit}
+                      onChange={handleChange}
+                    />
+                  ) : (
+                    customer.unit
+                  )}
+                </td>
+                <td className="border px-2 py-2 font-semibold text-blue-600">
+                  {calculateTotalPrice(customer.service, customer.unit)}
+                </td>
+                <td className="border px-2 py-2">
+                  {editingId === customer.id ? (
+                    <input
+                      className="border p-1 rounded"
+                      name="remark"
+                      value={editingData.remark}
+                      onChange={handleChange}
+                    />
+                  ) : (
+                    customer.remark
+                  )}
+                </td>
+                <td className="border px-2 py-2">
+                  {editingId === customer.id ? (
+                    <input
+                      type="datetime-local"
+                      className="border p-1 rounded"
+                      name="reminder"
+                      value={editingData.reminder}
+                      onChange={handleChange}
+                    />
+                  ) : (
+                    customer.reminder
+                  )}
+                </td>
+                <td className="border px-2 py-2">
+                  {editingId === customer.id ? (
+                    <div className="flex gap-2 justify-center">
+                      <button
+                        className="bg-green-500 hover:bg-green-600 text-white px-3 py-1 rounded shadow"
+                        onClick={() => handleSave(customer.id)}
+                      >
+                        Save
+                      </button>
+                      <button
+                        className="bg-gray-400 hover:bg-gray-500 text-white px-3 py-1 rounded shadow"
+                        onClick={() => {
+                          setEditingId(null);
+                          setEditingData({});
+                        }}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="flex gap-2 justify-center">
+                      <button
+                        className="bg-blue-500 hover:bg-blue-600 text-white px-3 py-1 rounded shadow"
+                        onClick={() => handleEdit(customer)}
+                      >
+                        Edit
+                      </button>
+                      <button
+                        className="bg-red-500 hover:bg-red-600 text-white px-3 py-1 rounded shadow"
+                        onClick={() => handleDelete(customer.id)}
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

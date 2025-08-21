@@ -1,144 +1,218 @@
-import { useForm } from "react-hook-form";
+// src/Components/AddCustomerDetails.jsx
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { collection, addDoc, serverTimestamp } from "firebase/firestore";
+import { db } from "../firebase";
 
-const servicePrices = {
-  transaction_Sms: 1.5,
-  promotion_Sms: 1,
-  official_Whatsapp: 2,
-  vertual_Whatsapp: 2.5,
-  voice_Call: 3,
-  ivr: 4,
-  digital_Marketing: 5,
-};
+function AddCustomerDetails({ user, setCustomerDetails }) {
+  const [form, setForm] = useState({
+    firstName: "",
+    lastName: "",
+    email: "",
+    phone: "",
+    dob: "",
+    service: "",
+    unit: "",
+    remark: "",
+    reminder: "",
+  });
 
-function AddCustomerDetails({ setCustomerDetails, customerDetails }) {
   const navigate = useNavigate();
-  const { register, handleSubmit, reset } = useForm();
 
-  const onSubmit = (data) => {
-    const existing = Array.isArray(customerDetails) ? customerDetails : [];
+  const handleChange = (e) => {
+    setForm({ ...form, [e.target.name]: e.target.value });
+  };
 
-    // price * unit
-    const unit = parseInt(data.unit) || 0;
-    const price = servicePrices[data.services] || 0;
-    const totalPrice = unit * price;
+  const handleSubmit = async (e) => {
+    e.preventDefault();
 
-    const updated = [...existing, { ...data, totalPrice }];
+    try {
+      const colRef = collection(db, "customers");
+      const docRef = await addDoc(colRef, {
+        ...form,
+        createdAt: serverTimestamp(),
+        salespersonId: user?.uid || null,
+      });
 
-    setCustomerDetails(updated);
-    localStorage.setItem("customerDetails", JSON.stringify(updated));
+      setCustomerDetails((prev) => [
+        ...prev,
+        { id: docRef.id, ...form, salespersonId: user?.uid },
+      ]);
 
-    reset();
+      setForm({
+        firstName: "",
+        lastName: "",
+        email: "",
+        phone: "",
+        dob: "",
+        service: "",
+        unit: "",
+        remark: "",
+        reminder: "",
+      });
 
-    // ✅ Navigate to Customer Details page
-    navigate("/customerdetails");
+      navigate("/customerdetails");
+    } catch (error) {
+      console.error("Error adding customer:", error);
+    }
   };
 
   return (
-    <div className="text-center mt-3 w-200 m-auto rounded bg-gray-50 p-5">
-      <h1 className="font-black mt-2">Customer Detail Form</h1>
-      <form onSubmit={handleSubmit(onSubmit)} className="m-auto mt-2 p-5">
-        <div className="flex justify-evenly">
-          <div>
-            <label>First Name: </label>
-            <br />
-            <input
-              placeholder="First Name"
-              {...register("firstname")}
-              className="border p-1"
-            />
-          </div>
-          <div>
-            <label>Last Name: </label>
-            <br />
-            <input
-              placeholder="Last Name"
-              {...register("lastname")}
-              className="border p-1"
-            />
-          </div>
-          <div>
-            <label>DOB: </label>
-            <br />
-            <input type="date" {...register("dob")} className="border p-1" />
-          </div>
-        </div>
+    <div className="flex items-center justify-center min-h-screen bg-gray-50 p-4">
+      <div className="w-full max-w-3xl bg-white shadow-2xl rounded-2xl p-8">
+        <h2 className="text-center text-2xl md:text-3xl font-bold mb-6 text-gray-800">
+          Add Customer Details
+        </h2>
 
-        <div className="flex justify-evenly">
-          <div>
-            <label>Phone Number:</label>
-            <br />
-            <input
-              placeholder="Phone number"
-              {...register("phonenumber")}
-              className="border p-1"
-            />
+        <form onSubmit={handleSubmit} className="space-y-6">
+          {/* First & Last Name */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div>
+              <label className="block text-gray-600 font-medium">
+                First Name
+              </label>
+              <input
+                type="text"
+                name="firstName"
+                placeholder="First Name"
+                value={form.firstName}
+                onChange={handleChange}
+                required
+                className="mt-2 w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400"
+              />
+            </div>
+            <div>
+              <label className="block text-gray-600 font-medium">
+                Last Name
+              </label>
+              <input
+                type="text"
+                name="lastName"
+                placeholder="Last Name"
+                value={form.lastName}
+                onChange={handleChange}
+                required
+                className="mt-2 w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400"
+              />
+            </div>
           </div>
-          <div>
-            <label>Email:</label>
-            <br />
-            <input
-              placeholder="Email"
-              {...register("emailid")}
-              className="border p-1"
-            />
-          </div>
-        </div>
 
-        <div className="flex justify-evenly">
-          <div>
-            <select {...register("services")} className="border-1 mt-5">
-              <option value="">Services</option>
-              <option value="transaction_Sms">Transaction SMS</option>
-              <option value="promotion_Sms">Promotion SMS</option>
-              <option value="official_Whatsapp">Official Whatsapp</option>
-              <option value="vertual_Whatsapp">Vertual Whatsapp</option>
-              <option value="voice_Call">Voice Call</option>
-              <option value="ivr">IVR</option>
-              <option value="digital_Marketing">Digital Marketing</option>
-            </select>
+          {/* Email & Phone */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div>
+              <label className="block text-gray-600 font-medium">Email</label>
+              <input
+                type="email"
+                name="email"
+                placeholder="Email"
+                value={form.email}
+                onChange={handleChange}
+                required
+                className="mt-2 w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400"
+              />
+            </div>
+            <div>
+              <label className="block text-gray-600 font-medium">
+                Phone Number
+              </label>
+              <input
+                type="text"
+                name="phone"
+                placeholder="Phone"
+                value={form.phone}
+                onChange={handleChange}
+                required
+                className="mt-2 w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400"
+              />
+            </div>
           </div>
-          <div>
-            <label>Unit</label>
-            <br />
-            <input
-              type="number"
-              placeholder="Total Unit"
-              {...register("unit")}
-              className="border p-1"
-            />
-          </div>
-        </div>
 
-        <div className="flex justify-evenly">
-          <div className="mt-2">
-            <label>Remark: </label>
-            <br />
-            <input
-              placeholder="Remark"
-              {...register("remark")}
-              className="border p-1"
-            />
+          {/* DOB & Service */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div>
+              <label className="block text-gray-600 font-medium">DOB</label>
+              <input
+                type="date"
+                name="dob"
+                value={form.dob}
+                onChange={handleChange}
+                required
+                className="mt-2 w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400"
+              />
+            </div>
+            <div>
+              <label className="block text-gray-600 font-medium">Service</label>
+              <select
+                name="service"
+                value={form.service}
+                onChange={handleChange}
+                required
+                className="mt-2 w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400"
+              >
+                <option value="">Select Service</option>
+                <option value="transaction_Sms">Transaction SMS</option>
+                <option value="promotion_Sms">Promotion SMS</option>
+                <option value="official_Whatsapp">Official Whatsapp</option>
+                <option value="vertual_Whatsapp">Virtual Whatsapp</option>
+                <option value="voice_Call">Voice Call</option>
+                <option value="ivr">IVR</option>
+                <option value="digital_Marketing">Digital Marketing</option>
+              </select>
+            </div>
           </div>
-          <div className="mt-2">
-            <label>Remainder: </label>
-            <br />
+
+          {/* Unit & Remark */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div>
+              <label className="block text-gray-600 font-medium">Unit</label>
+              <input
+                type="number"
+                name="unit"
+                placeholder="Unit"
+                value={form.unit}
+                onChange={handleChange}
+                required
+                className="mt-2 w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400"
+              />
+            </div>
+            <div>
+              <label className="block text-gray-600 font-medium">Remark</label>
+              <input
+                type="text"
+                name="remark"
+                placeholder="Remark"
+                value={form.remark}
+                onChange={handleChange}
+                required
+                className="mt-2 w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400"
+              />
+            </div>
+          </div>
+
+          {/* Reminder */}
+          <div>
+            <label className="block text-gray-600 font-medium">Reminder</label>
             <input
               type="datetime-local"
-              {...register("remainder")}
-              className="border p-1"
+              name="reminder"
+              value={form.reminder}
+              onChange={handleChange}
+              required
+              className="mt-2 w-full md:w-1/2 px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400"
             />
           </div>
-        </div>
 
-        <button
-          type="submit"
-          className="bg-cyan-300 p-2 rounded-2xl w-50 text-white font-black mt-5"
-        >
-          Submit
-        </button>
-      </form>
+          {/* Submit */}
+          <button
+            type="submit"
+            className="w-full bg-blue-500 text-white py-3 rounded-lg font-semibold hover:bg-blue-600 transition"
+          >
+            Add Customer
+          </button>
+        </form>
+      </div>
     </div>
   );
 }
+
 export default AddCustomerDetails;
